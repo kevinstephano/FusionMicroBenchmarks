@@ -15,17 +15,25 @@ class Fusion(Module):
         self.bias = torch.nn.Parameter(torch.zeros(hidden_size))
         self.dropout = torch.nn.Dropout(0.1)
         self.layer_norm = torch.nn.LayerNorm(hidden_size, eps=1e-12)
+        self.linear_a = torch.nn.Linear(1024,1024)
+        self.linear_b = torch.nn.Linear(1024,1024)
+        self.linear_c = torch.nn.Linear(1024,1024)
 
     def forward(self, inputs1, inputs2):
         out1 = inputs1 + self.bias
         out2 = self.dropout(out1)
         out3 = out2 + inputs2
         out4 = self.layer_norm(out3)
-        return out4
+        out5 = self.linear_a(out4)
+        out6 = self.linear_b(out4)
+        out7 = self.linear_c(out4)
+        return out5,out6,out7
 
 inputs1 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
 inputs2 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
-grads = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+grads1 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+grads2 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+grads3 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
 
 model = Fusion(1024)
 model.cuda()
@@ -37,5 +45,5 @@ for idx in range(5) :
         print(jit_model.graph_for(inputs1, inputs2))
         for state in list(jit_model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
             print(list(state.execution_plans.values())[0].graph)
-    out = jit_model.forward(inputs1, inputs2)
-    out.backward(grads)
+    out1,out2,out3 = jit_model.forward(inputs1, inputs2)
+    torch.autograd.backward((out1,out2,out3), (grads1,grads2,grads3))

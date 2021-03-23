@@ -21,8 +21,8 @@ class Fusion(Module):
         return out2
 
 
-inputs = torch.randn(8, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
-grads = torch.randn(8, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+inputs = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
+grads = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
 
 model = Fusion(1024)
 model.cuda()
@@ -30,13 +30,9 @@ model.cuda()
 jit_model = torch.jit.script(model)
 
 for idx in range(5) :
-    if idx == 1 :
-        print(jit_model.graph_for(inputs))
     if idx == 3 :
-        bwd_graph = list(
-            list(jit_model.get_debug_state().execution_plans.values())[
-                0].code.grad_executor_states()[0].execution_plans.values()
-        )[0].graph
-        print(bwd_graph)
+        print(jit_model.graph_for(inputs))
+        for state in list(jit_model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
+            print(list(state.execution_plans.values())[0].graph)
     out = jit_model.forward(inputs)
     out.backward(grads)
