@@ -26,7 +26,7 @@ class BertConfig :
 class BertTest(nn.Module):
     def __init__(self, config):
         super(BertTest, self).__init__()
-        self.layers = nn.ModuleList([BertAttention(config) for x in range(config.num_layers)]) 
+        self.layers = nn.ModuleList([Fusion(config) for x in range(config.num_layers)]) 
 
     def forward(self, input_tensor, attention_mask):
         my_input_tensor = input_tensor
@@ -35,9 +35,9 @@ class BertTest(nn.Module):
             my_input_tensor = output_tensor
         return output_tensor
 
-class BertAttention(nn.Module):
+class Fusion(nn.Module):
     def __init__(self, config):
-        super(BertAttention, self).__init__()
+        super(Fusion, self).__init__()
         self.self = BertSelfAttention(config)
         self.output = BertSelfOutput(config)
 
@@ -64,14 +64,12 @@ class BertSelfAttention(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
 
     def transpose_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
-        x = torch.reshape(x, new_x_shape)
-        return x.permute(0, 2, 1, 3)
+        x = x.view(x.size(0), x.size(1) * self.num_attention_heads, self.attention_head_size).transpose(0,1)
+        return x
 
     def transpose_key_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
-        x = torch.reshape(x, new_x_shape)
-        return x.permute(0, 2, 3, 1)
+        x = x.view(x.size(0), x.size(1) * self.num_attention_heads, self.attention_head_size).transpose(0,1).transpose(1,2)
+        return x
 
     def forward(self, hidden_states, attention_mask):
         mixed_query_layer = self.query(hidden_states)
@@ -83,7 +81,11 @@ class BertSelfAttention(nn.Module):
         value_layer = self.transpose_for_scores(mixed_value_layer)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
-        attention_scores = torch.matmul(query_layer, key_layer)
+        attention_scores = torch.bmm(query_layer, key_layer)
+        attention_scores = attention_scores.view(int(attention_scores.size(0) / self.num_attention_heads),
+                                                 self.num_attention_heads,
+                                                 attention_scores.size(1),
+                                                 attention_scores.size(2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
         attention_scores = attention_scores + attention_mask
@@ -95,10 +97,12 @@ class BertSelfAttention(nn.Module):
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
 
-        context_layer = torch.matmul(attention_probs, value_layer)
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
-        context_layer = torch.reshape(context_layer, new_context_layer_shape)
+        attention_probs = attention_probs.view(attention_probs.size(0)*attention_probs.size(1), attention_probs.size(2), attention_probs.size(3))
+
+        context_layer = torch.bmm(attention_probs, value_layer)
+
+        context_layer = context_layer.transpose(0,1).contiguous()
+        context_layer = context_layer.view(context_layer.size(0), int(context_layer.size(1) / self.num_attention_heads), self.all_head_size)
         return context_layer
 
 class BertLayerNorm(Module):
@@ -124,24 +128,21 @@ class BertSelfOutput(nn.Module):
         output4 = self.LayerNorm(output3)
         return output4
 
+if __name__ == "__main__" :
+    inputs = torch.randn(8, 512, 1024, device="cuda", dtype=torch.float, requires_grad=True).transpose(0,1)
+    mask = torch.randn(8, 1, 1, 512, device="cuda", dtype=torch.float, requires_grad=False)
+    mask_bool = mask > 0.
+    grads = torch.randn(512, 8, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+   
+    model = Fusion(BertConfig())
+    model.cuda()
+   
+    jit_model = torch.jit.script(model)
 
-
-
-inputs = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
-mask = torch.randn(256, 1, 1, 128, device="cuda", dtype=torch.float, requires_grad=False)
-mask_bool = mask > 0.
-grads = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
-
-model = BertAttention(BertConfig())
-model.cuda()
-
-jit_model = torch.jit.script(model)
-
-
-for idx in range(5) :
-    if idx == 3 :
-        print(jit_model.graph_for(inputs, mask_bool))
-        for state in list(jit_model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
-            print(list(state.execution_plans.values())[0].graph)
-    out = jit_model.forward(inputs, mask_bool)
-    out.backward(grads)
+    for idx in range(5) :
+        if idx == 3 :
+            print(jit_model.graph_for(inputs, mask_bool))
+            for state in list(jit_model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
+                print(list(state.execution_plans.values())[0].graph)
+        out = jit_model.forward(inputs, mask_bool)
+        out.backward(grads)

@@ -29,21 +29,22 @@ class Fusion(Module):
         out7 = self.linear_c(out4)
         return out5,out6,out7
 
-inputs1 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
-inputs2 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
-grads1 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
-grads2 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
-grads3 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
-
-model = Fusion(1024)
-model.cuda()
-
-jit_model = torch.jit.script(model)
-
-for idx in range(5) :
-    if idx == 3 :
-        print(jit_model.graph_for(inputs1, inputs2))
-        for state in list(jit_model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
-            print(list(state.execution_plans.values())[0].graph)
-    out1,out2,out3 = jit_model.forward(inputs1, inputs2)
-    torch.autograd.backward((out1,out2,out3), (grads1,grads2,grads3))
+if __name__ == "__main__" :
+    inputs1 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
+    inputs2 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=True)
+    grads1 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+    grads2 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+    grads3 = torch.randn(256, 128, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+   
+    model = Fusion(1024)
+    model.cuda()
+   
+    jit_model = torch.jit.script(model)
+   
+    for idx in range(5) :
+        if idx == 3 :
+            print(jit_model.graph_for(inputs1, inputs2))
+            for state in list(jit_model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
+                print(list(state.execution_plans.values())[0].graph)
+        out1,out2,out3 = jit_model.forward(inputs1, inputs2)
+        torch.autograd.backward((out1,out2,out3), (grads1,grads2,grads3))

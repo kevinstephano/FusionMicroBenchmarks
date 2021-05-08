@@ -641,23 +641,24 @@ class BertSelfOutput(nn.Module):
         output4 = self.LayerNorm(output3)
         return output4
 
-inputs = torch.randint(0, 30522, (64, 128), device="cuda", dtype=torch.int64, requires_grad=False)
-mask = torch.randint(0, 2, (64, 128), device="cuda", dtype=torch.int64, requires_grad=False)
-seq = torch.randint(0, 2, (64, 128), device="cuda", dtype=torch.int64, requires_grad=False)
-grads1 = torch.randn(64, 128, 30522, device="cuda", dtype=torch.float32, requires_grad=False)
-grads2 = torch.randn(64, 2, device="cuda", dtype=torch.float32, requires_grad=False)
-
-model = BertForPreTraining(BertConfig())
-model.train()
-model.cuda()
-
-model = torch.jit.script(model)
-
-with torch.autograd.profiler.emit_nvtx(enabled=True): ### Profiling
-    for idx in range(5) :
-        if idx == 3 :
-            print(model.graph_for(inputs, seq, mask))
-            #for state in list(model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
-            #    print(list(state.execution_plans.values())[0].graph)
-        out1,out2 = model(input_ids=inputs, token_type_ids=seq, attention_mask=mask)
-        torch.autograd.backward((out1, out2),(grads1, grads2))
+if __name__ == "__main__" :
+    inputs = torch.randint(0, 30522, (64, 128), device="cuda", dtype=torch.int64, requires_grad=False)
+    mask = torch.randint(0, 2, (64, 128), device="cuda", dtype=torch.int64, requires_grad=False)
+    seq = torch.randint(0, 2, (64, 128), device="cuda", dtype=torch.int64, requires_grad=False)
+    grads1 = torch.randn(64, 128, 30522, device="cuda", dtype=torch.float32, requires_grad=False)
+    grads2 = torch.randn(64, 2, device="cuda", dtype=torch.float32, requires_grad=False)
+   
+    model = BertForPreTraining(BertConfig())
+    model.train()
+    model.cuda()
+   
+    model = torch.jit.script(model)
+   
+    with torch.autograd.profiler.emit_nvtx(enabled=True): ### Profiling
+        for idx in range(5) :
+            if idx == 3 :
+                print(model.graph_for(inputs, seq, mask))
+                #for state in list(model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
+                #    print(list(state.execution_plans.values())[0].graph)
+            out1,out2 = model(input_ids=inputs, token_type_ids=seq, attention_mask=mask)
+            torch.autograd.backward((out1, out2),(grads1, grads2))
