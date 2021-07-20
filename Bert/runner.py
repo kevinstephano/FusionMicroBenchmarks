@@ -21,6 +21,7 @@ args = parser.parse_args()
 import bias_gelu
 import div_mask_softmax_dropout
 import bias_dropout_add_layernorm
+import bias_dropout_add_layernorm_3linears
 import multihead_attention
 
 def clear_l2_cache() :
@@ -82,6 +83,8 @@ tests = [[bias_gelu, gen_3d_args(64, 4096, 32, 128, 32)],
          [div_mask_softmax_dropout, gen_4d_args(8, 16, 32, 512, 32)],
          [bias_dropout_add_layernorm, gen_2x_3d_args(64, 1024, 32, 128, 32)],
          [bias_dropout_add_layernorm, gen_2x_3d_args(8, 1024, 32, 512, 32)],
+         [bias_dropout_add_layernorm_3linears, gen_2x_3d_args(64, 1024, 32, 128, 32)],
+         [bias_dropout_add_layernorm_3linears, gen_2x_3d_args(8, 1024, 32, 512, 32)],
          [multihead_attention, gen_mha_args(64, 1024, 32, 128, 32)],
          [multihead_attention, gen_mha_args(8, 1024, 32, 512, 32)]]
 
