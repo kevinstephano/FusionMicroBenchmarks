@@ -1,6 +1,10 @@
+import argparse
+from functools import reduce
+import operator
+from operator import itemgetter
+
 import torch
 import torch.nn.functional as F
-import argparse
 
 # Enable NVFuser
 torch._C._jit_set_nvfuser_enabled(True)
@@ -15,6 +19,8 @@ torch._C._jit_set_bailout_depth(20)
 parser = argparse.ArgumentParser(description='Fusion Benchmark Runner')
 parser.add_argument('--warmup-trials', default=5, type=int, help='Number of trials to not measure.')
 parser.add_argument('--trials', default=100, type=int, help='Number of trials to average execution time over.')
+parser.add_argument('--fp16', default=False, action='store_true', help='FP16 Precision.')
+parser.add_argument('--inference', default=False, action='store_true', help='Measure inference.')
 
 args = parser.parse_args()
 
@@ -23,43 +29,125 @@ from layer_norm import ApexLayerNorm
 from layer_norm import ApexFastLayerNorm
 
 def clear_l2_cache() :
-    t0 = torch.empty(1024*1024*10, dtype=torch.float, device='cuda', requires_grad=False)
+    t0 = torch.empty(1024*1024*50, dtype=torch.float, device='cuda', requires_grad=False)
     t1 = t0.clone()
 
-def gen_tensor_dims(recipe, partial, idx, result) :
-    print("RECIPE", recipe, partial, idx)
-    if idx < 0 :
-        result.append(partial.reverse())
-        print(partial, result)
-    else :
-        assert len(recipe[idx]) == 4, "All tensor dimension recipes should be 4 dimensions."
-        low,high,inc,inc_type = recipe[idx]
-        print("DIM RECIPE", low, high, inc, inc_type)
-        assert low <= high, "Invalid recipe range."
-        dim_recipe = recipe[idx]
-        if inc_type == 'pow' :
-            print("POW!")
-            while low <= high :
-                print("GEN LOW", low)
-                partial.append(pow(inc, low))
-                print("GEN LOW", low, inc)
-                gen_tensor_dims(recipe, partial, idx-1, result)
-                partial.pop()
-                low += 1
-        else :
-            assert False, "Unrecognized dimension recipe increment type: {}".format(inc_type)
+def gen_tensor_dims(recipe) :
+    if len(recipe) == 0 :
+        return
 
-tests = [[[8, 8, 2, 'pow'], [7, 7, 2, 'pow'], [10, 10, 2, 'pow']],
+    queue = []
+    queue.append((0, []))
+
+    while len(queue) > 0 :
+        idx, result = queue.pop(0)
+        low,high,inc,inc_type = recipe[idx]
+        assert low <= high
+        for val in range(low, high+inc, inc) :
+            dim = val
+            if inc_type == 'pow' :
+               dim = pow(2, val)
+            result.append(dim)
+            if idx == (len(recipe)-1) :
+                yield result.copy()
+            else :
+                queue.append((idx+1, result.copy()))
+            result.pop()
+
+tests = [[[0, 8, 1, 'pow'], [128, 512, 128, 'add'], [10, 10, 1, 'pow']],
         ]
-impls = [Fusion, ApexLayerNorm, ApexFastLayerNorm]
+#tests = [[[6, 6, 1, 'pow'], [128, 128, 128, 'add'], [10, 10, 1, 'pow']],
+#        ]
+op_modules = [Fusion, ApexLayerNorm, ApexFastLayerNorm]
+
+# Keep runs consistent
+torch.cuda.manual_seed(111)
+data_type = torch.float16 if args.fp16 else torch.float32
+
+op_impls = []
+for mod in op_modules :
+    if mod == Fusion :
+        op_impls.append(('Eager', mod))
+        op_impls.append(('NVFuser', mod))
+    else :
+        op_impls.append((mod.__name__, mod))
+            
+start_evt_fwd = torch.cuda.Event(enable_timing=True)
+stop_evt_fwd = torch.cuda.Event(enable_timing=True)
+
+start_evt_bwd = None
+stop_evt_bwd = None
+if not args.inference :
+    start_evt_bwd = torch.cuda.Event(enable_timing=True)
+    stop_evt_bwd = torch.cuda.Event(enable_timing=True)
 
 for test in tests :
-    print(test)
-    tensor_dims = []
-    gen_tensor_dims(test, [], len(test)-1, tensor_dims)
-    print(tensor_dims)
-    for td in tensor_dims :
-        print(test, td)
+    experiments = [(td, reduce(operator.mul, td)) for td in gen_tensor_dims(test)]
+    experiments = sorted(experiments, key=itemgetter(1))
+    for dims,elems in experiments :
+        result = "infer;" if args.inference else "train;"
+        result += str(dims) + ';' + str(elems)
+
+        # Setup Data Tensors
+        inputs = torch.randn(*dims, device="cuda", dtype=data_type, requires_grad=(not args.inference))
+        grads = None
+        if not args.inference :
+            grads = torch.randn(*dims, device="cuda", dtype=data_type, requires_grad=False)
+
+        # Loop over model implemenatations
+        for impl in op_impls :
+            if impl[0] == 'NVFuser' :
+                model = torch.jit.script(impl[1](dims[-1]))
+            else :
+                model = impl[1](dims[-1])
+
+            if args.fp16 :
+                model.half()
+            model.cuda()
+
+            elapsed_time_fwd = 0.0
+            elapsed_time_bwd = 0.0
+            for cnt in range(0, args.trials + args.warmup_trials) :
+                # Setup Step
+                if not args.inference :
+                    inputs.grad = None
+                    model.zero_grad(set_to_none=True)
+                clear_l2_cache()
+                torch.cuda.synchronize()
+
+                # Time forward
+                if cnt >= args.warmup_trials :
+                    start_evt_fwd.record()
+                out = model(inputs)
+                if cnt >= args.warmup_trials :
+                    stop_evt_fwd.record()
+
+                # Time backward (if enabled)
+                if not args.inference :
+                    if cnt >= args.warmup_trials :
+                        start_evt_bwd.record()
+                    out.backward(grads)
+                    if cnt >= args.warmup_trials :
+                        stop_evt_bwd.record()
+
+                if cnt >= args.warmup_trials :
+                    torch.cuda.synchronize()
+                    #stop_evt_fwd.synchronize()
+                    elapsed_time_fwd += start_evt_fwd.elapsed_time(stop_evt_fwd)
+                    if not args.inference :
+                        #stop_evt_bwd.synchronize()
+                        elapsed_time_bwd += start_evt_bwd.elapsed_time(stop_evt_bwd)
+        
+            fwd_time = elapsed_time_fwd / args.trials
+            bwd_time = 0.0
+            if not args.inference :
+                bwd_time = elapsed_time_bwd / args.trials
+
+            result += ';' + impl[0] + ';' + str(fwd_time)
+            if not args.inference :
+                result += ';' + str(bwd_time)
+
+        print(result)
 
 """
 for test_class,tensor_gen in tests :
