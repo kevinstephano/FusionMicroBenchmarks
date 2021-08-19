@@ -18,47 +18,50 @@ parser.add_argument('--trials', default=100, type=int, help='Number of trials to
 
 args = parser.parse_args()
 
-import layer_norm
+from layer_norm import Fusion
+from layer_norm import ApexLayerNorm
+from layer_norm import ApexFastLayerNorm
 
 def clear_l2_cache() :
     t0 = torch.empty(1024*1024*10, dtype=torch.float, device='cuda', requires_grad=False)
     t1 = t0.clone()
 
-def gen_3d_args (seqs, hidden_dim, low, high, step) :
-    name_list = []
-    input_list = []
-    is_bool_list = []
-    grad_list = []
-    for idx in range(low, high+step, step) :
-        name_list.append("_sq" + str(seqs) + "_dm" + str(hidden_dim) + "_ln" + str(idx))
-        input_list.append([[idx, seqs, hidden_dim]])
-        is_bool_list.append([False])
-        grad_list.append([[idx, seqs, hidden_dim]])
-    return name_list,input_list,is_bool_list,grad_list
+def gen_tensor_dims(recipe, partial, idx, result) :
+    print("RECIPE", recipe, partial, idx)
+    if idx < 0 :
+        result.append(partial.reverse())
+        print(partial, result)
+    else :
+        assert len(recipe[idx]) == 4, "All tensor dimension recipes should be 4 dimensions."
+        low,high,inc,inc_type = recipe[idx]
+        print("DIM RECIPE", low, high, inc, inc_type)
+        assert low <= high, "Invalid recipe range."
+        dim_recipe = recipe[idx]
+        if inc_type == 'pow' :
+            print("POW!")
+            while low <= high :
+                print("GEN LOW", low)
+                partial.append(pow(inc, low))
+                print("GEN LOW", low, inc)
+                gen_tensor_dims(recipe, partial, idx-1, result)
+                partial.pop()
+                low += 1
+        else :
+            assert False, "Unrecognized dimension recipe increment type: {}".format(inc_type)
 
-def gen_2x_3d_args (seqs, hidden_dim, low, high, step) :
-    name_list = []
-    input_list = []
-    is_bool_list = []
-    grad_list = []
-    for idx in range(low, high+step, step) :
-        name_list.append("_sq" + str(seqs) + "_dm" + str(hidden_dim) + "_ln" + str(idx))
-        input_list.append([[idx, seqs, hidden_dim], [idx, seqs, hidden_dim]])
-        is_bool_list.append([False, False])
-        grad_list.append([[idx, seqs, hidden_dim]])
-    return name_list,input_list,is_bool_list,grad_list
+tests = [[[8, 8, 2, 'pow'], [7, 7, 2, 'pow'], [10, 10, 2, 'pow']],
+        ]
+impls = [Fusion, ApexLayerNorm, ApexFastLayerNorm]
 
-tests = [[bias_gelu, gen_3d_args(64, 4096, 32, 128, 32)],
-         [bias_gelu, gen_3d_args(8, 4096, 32, 512, 32)],
-         [div_mask_softmax_dropout, gen_4d_args(64, 16, 32, 128, 32)],
-         [div_mask_softmax_dropout, gen_4d_args(8, 16, 32, 512, 32)],
-         [bias_dropout_add_layernorm, gen_2x_3d_args(64, 1024, 32, 128, 32)],
-         [bias_dropout_add_layernorm, gen_2x_3d_args(8, 1024, 32, 512, 32)],
-         [bias_dropout_add_layernorm_3linears, gen_2x_3d_args(64, 1024, 32, 128, 32)],
-         [bias_dropout_add_layernorm_3linears, gen_2x_3d_args(8, 1024, 32, 512, 32)],
-         [multihead_attention, gen_mha_args(64, 1024, 32, 128, 32)],
-         [multihead_attention, gen_mha_args(8, 1024, 32, 512, 32)]]
+for test in tests :
+    print(test)
+    tensor_dims = []
+    gen_tensor_dims(test, [], len(test)-1, tensor_dims)
+    print(tensor_dims)
+    for td in tensor_dims :
+        print(test, td)
 
+"""
 for test_class,tensor_gen in tests :
     model = test_class.Fusion(test_class.BertConfig())
     model.cuda()
@@ -141,3 +144,4 @@ for test_class,tensor_gen in tests :
         per_diff_fwd = (eager_fwd_time - jit_fwd_time) / eager_fwd_time * 100.0
         per_diff_bwd = (eager_bwd_time - jit_bwd_time) / eager_bwd_time * 100.0
         print(test_name, "EAGER-Fwd:", eager_fwd_time, "Bwd:", eager_bwd_time, "JIT-Fwd:", jit_fwd_time, "Bwd:", jit_bwd_time, "%Diff_Fwd", per_diff_fwd, "%Diff_Bwd:", per_diff_bwd )
+"""
