@@ -71,10 +71,10 @@ for mod in op_modules :
         op_impls.append(('NVFuser', mod))
     else :
         op_impls.append((mod.__name__, mod))
-            
+  
+# Create Cuda Timing Events
 start_evt_fwd = torch.cuda.Event(enable_timing=True)
 stop_evt_fwd = torch.cuda.Event(enable_timing=True)
-
 start_evt_bwd = None
 stop_evt_bwd = None
 if not args.inference :
