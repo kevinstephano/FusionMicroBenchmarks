@@ -86,6 +86,7 @@ for test in tests :
     experiments = sorted(experiments, key=itemgetter(1))
     for dims,elems in experiments :
         result = "infer;" if args.inference else "train;"
+        result += str(data_type) + ';'
         result += str(dims) + ';' + str(elems)
 
         # Setup Data Tensors
@@ -113,123 +114,30 @@ for test in tests :
                     inputs.grad = None
                     model.zero_grad(set_to_none=True)
                 clear_l2_cache()
-                torch.cuda.synchronize()
 
                 # Time forward
-                if cnt >= args.warmup_trials :
-                    start_evt_fwd.record()
+                start_evt_fwd.record()
                 out = model(inputs)
-                if cnt >= args.warmup_trials :
-                    stop_evt_fwd.record()
+                stop_evt_fwd.record()
 
                 # Time backward (if enabled)
                 if not args.inference :
-                    if cnt >= args.warmup_trials :
-                        start_evt_bwd.record()
+                    start_evt_bwd.record()
                     out.backward(grads)
-                    if cnt >= args.warmup_trials :
-                        stop_evt_bwd.record()
+                    stop_evt_bwd.record()
 
+                # Collect timing results
                 if cnt >= args.warmup_trials :
                     torch.cuda.synchronize()
-                    #stop_evt_fwd.synchronize()
                     elapsed_time_fwd += start_evt_fwd.elapsed_time(stop_evt_fwd)
                     if not args.inference :
-                        #stop_evt_bwd.synchronize()
                         elapsed_time_bwd += start_evt_bwd.elapsed_time(stop_evt_bwd)
         
             fwd_time = elapsed_time_fwd / args.trials
-            bwd_time = 0.0
+            result += ';' + impl[0] + ';' + str(fwd_time)
+
             if not args.inference :
                 bwd_time = elapsed_time_bwd / args.trials
-
-            result += ';' + impl[0] + ';' + str(fwd_time)
-            if not args.inference :
                 result += ';' + str(bwd_time)
 
         print(result)
-
-"""
-for test_class,tensor_gen in tests :
-    model = test_class.Fusion(test_class.BertConfig())
-    model.cuda()
-    torch.cuda.manual_seed(111)
-
-    jit_model = torch.jit.script(model)
-
-    name_list,input_list,is_bool_list,grad_list = tensor_gen 
-    for idx in range(0, len(name_list)) :
-        test_name = test_class.__name__ + "_" + name_list[idx]
-        #print(test_name)
-        inputs = []
-        grads = []
-
-        for input_idx in range(0, len(input_list[idx])) :
-            if is_bool_list[idx][input_idx] :
-                tmp = torch.randn(*input_list[idx][input_idx], device="cuda", dtype=torch.float, requires_grad=False)
-                tmp_bool = tmp > 0.
-                inputs.append(tmp_bool)
-            else :
-                inputs.append(torch.randn(*input_list[idx][input_idx], device="cuda", dtype=torch.float, requires_grad=True))
-
-        for grad_idx in range(0, len(grad_list[idx])) :
-            grads.append(torch.randn(*grad_list[idx][grad_idx], device="cuda", dtype=torch.float, requires_grad=False))
-            
-        start_evt_fwd = torch.cuda.Event(enable_timing=True)
-        stop_evt_fwd = torch.cuda.Event(enable_timing=True)
-        start_evt_bwd = torch.cuda.Event(enable_timing=True)
-        stop_evt_bwd = torch.cuda.Event(enable_timing=True)
-  
-        elapsed_time_fwd = 0.0
-        elapsed_time_bwd = 0.0
-        jit_elapsed_time_fwd = 0.0
-        jit_elapsed_time_bwd = 0.0
-  
-        for cnt in range(0, args.trials + args.warmup_trials) :
-            for input_idx in range(0, len(inputs)) :
-                if not is_bool_list[idx][input_idx] :
-                    inputs[input_idx].grad = None
-            model.zero_grad(set_to_none=True)
-            clear_l2_cache()
-            torch.cuda.synchronize()
-            if cnt >= args.warmup_trials :
-                start_evt_fwd.record()
-            out = model(*inputs)
-            if cnt >= args.warmup_trials :
-                stop_evt_fwd.record()
-                start_evt_bwd.record()
-            out.backward(*grads)
-            if cnt >= args.warmup_trials :
-                stop_evt_bwd.record()
-                stop_evt_bwd.synchronize()
-                elapsed_time_fwd += start_evt_fwd.elapsed_time(stop_evt_fwd)
-                elapsed_time_bwd += start_evt_bwd.elapsed_time(stop_evt_bwd)
-  
-        for cnt in range(0, args.trials + args.warmup_trials) :
-            for input_idx in range(0, len(inputs)) :
-                if not is_bool_list[idx][input_idx] :
-                    inputs[input_idx].grad = None
-            jit_model.zero_grad(set_to_none=True)
-            clear_l2_cache()
-            torch.cuda.synchronize()
-            if cnt >= args.warmup_trials :
-                start_evt_fwd.record()
-            jit_out = jit_model(*inputs)
-            if cnt >= args.warmup_trials :
-                stop_evt_fwd.record()
-                start_evt_bwd.record()
-            jit_out.backward(*grads)
-            if cnt >= args.warmup_trials :
-                stop_evt_bwd.record()
-                stop_evt_bwd.synchronize()
-                jit_elapsed_time_fwd += start_evt_fwd.elapsed_time(stop_evt_fwd)
-                jit_elapsed_time_bwd += start_evt_bwd.elapsed_time(stop_evt_bwd)
- 
-        eager_fwd_time = elapsed_time_fwd / args.trials
-        jit_fwd_time = jit_elapsed_time_fwd / args.trials
-        eager_bwd_time = elapsed_time_bwd / args.trials
-        jit_bwd_time = jit_elapsed_time_bwd / args.trials
-        per_diff_fwd = (eager_fwd_time - jit_fwd_time) / eager_fwd_time * 100.0
-        per_diff_bwd = (eager_bwd_time - jit_bwd_time) / eager_bwd_time * 100.0
-        print(test_name, "EAGER-Fwd:", eager_fwd_time, "Bwd:", eager_bwd_time, "JIT-Fwd:", jit_fwd_time, "Bwd:", jit_bwd_time, "%Diff_Fwd", per_diff_fwd, "%Diff_Bwd:", per_diff_bwd )
-"""
