@@ -3,6 +3,8 @@ import subprocess
 import torch
 from torch.nn import Module
 
+import runner
+
 try :
     from apex.normalization.fused_layer_norm import FusedLayerNorm
     from apex.contrib.layer_norm import FastLayerNorm
@@ -15,14 +17,6 @@ except ModuleNotFoundError :
     subprocess.run(cmd)
     os.chdir(curr_dir)
     from apex.contrib.layer_norm import FastLayerNorm
-
-torch._C._jit_set_nvfuser_enabled(True)
-torch._C._jit_set_texpr_fuser_enabled(False)
-torch._C._jit_set_profiling_executor(True)
-torch._C._jit_set_profiling_mode(True)
-torch._C._jit_override_can_fuse_on_cpu(False)
-torch._C._jit_override_can_fuse_on_gpu(False)
-torch._C._jit_set_bailout_depth(20)
 
 class Fusion(Module):
     def __init__(self, norm_size):
@@ -53,19 +47,10 @@ class ApexFastLayerNorm(Module):
         return out1
 
 if __name__ == "__main__" :
-    inputs = torch.randn(8, 512, 1024, device="cuda", dtype=torch.float, requires_grad=True)
-    grads = torch.randn(8, 512, 1024, device="cuda", dtype=torch.float, requires_grad=False)
+    tests = [[[0, 8, 1, 'pow'], [128, 512, 128, 'add'], [10, 10, 1, 'pow']],
+            ]
+    #tests = [[[8, 8, 1, 'pow'], [128, 128, 128, 'add'], [10, 10, 1, 'pow']],
+    #        ]
+    op_modules = [Fusion, ApexLayerNorm, ApexFastLayerNorm]
 
-    #model = Fusion(1024)
-    model = FusedLayerNorm(1024)
-    model.cuda()
-
-    #jit_model = torch.jit.script(model)
-
-    for idx in range(5) :
-        #if idx == 3 :
-        #    print(jit_model.graph_for(inputs))
-        #    for state in list(jit_model.get_debug_state().execution_plans.values())[0].code.grad_executor_states() :
-        #        print(list(state.execution_plans.values())[0].graph)
-        out = model.forward(inputs)
-        out.backward(grads)
+    runner.runner(runner.args, op_modules, tests)

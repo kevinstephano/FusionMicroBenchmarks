@@ -15,7 +15,6 @@ torch._C._jit_override_can_fuse_on_cpu(False)
 torch._C._jit_override_can_fuse_on_gpu(False)
 torch._C._jit_set_bailout_depth(20)
 
-
 parser = argparse.ArgumentParser(description='Fusion Benchmark Runner')
 parser.add_argument('--warmup-trials', default=5, type=int, help='Number of trials to not measure.')
 parser.add_argument('--trials', default=100, type=int, help='Number of trials to average execution time over.')
@@ -23,10 +22,6 @@ parser.add_argument('--fp16', default=False, action='store_true', help='FP16 Pre
 parser.add_argument('--inference', default=False, action='store_true', help='Measure inference.')
 
 args = parser.parse_args()
-
-from layer_norm import Fusion
-from layer_norm import ApexLayerNorm
-from layer_norm import ApexFastLayerNorm
 
 def clear_l2_cache() :
     t0 = torch.empty(1024*1024*50, dtype=torch.float, device='cuda', requires_grad=False)
@@ -54,90 +49,85 @@ def gen_tensor_dims(recipe) :
                 queue.append((idx+1, result.copy()))
             result.pop()
 
-tests = [[[0, 8, 1, 'pow'], [128, 512, 128, 'add'], [10, 10, 1, 'pow']],
-        ]
-#tests = [[[6, 6, 1, 'pow'], [128, 128, 128, 'add'], [10, 10, 1, 'pow']],
-#        ]
-op_modules = [Fusion, ApexLayerNorm, ApexFastLayerNorm]
-
-# Keep runs consistent
-torch.cuda.manual_seed(111)
-data_type = torch.float16 if args.fp16 else torch.float32
-
-op_impls = []
-for mod in op_modules :
-    if mod == Fusion :
-        op_impls.append(('Eager', mod))
-        op_impls.append(('NVFuser', mod))
-    else :
-        op_impls.append((mod.__name__, mod))
-  
-# Create Cuda Timing Events
-start_evt_fwd = torch.cuda.Event(enable_timing=True)
-stop_evt_fwd = torch.cuda.Event(enable_timing=True)
-start_evt_bwd = None
-stop_evt_bwd = None
-if not args.inference :
-    start_evt_bwd = torch.cuda.Event(enable_timing=True)
-    stop_evt_bwd = torch.cuda.Event(enable_timing=True)
-
-for test in tests :
-    experiments = [(td, reduce(operator.mul, td)) for td in gen_tensor_dims(test)]
-    experiments = sorted(experiments, key=itemgetter(1))
-    for dims,elems in experiments :
-        result = "infer;" if args.inference else "train;"
-        result += str(data_type) + ';'
-        result += str(dims) + ';' + str(elems)
-
-        # Setup Data Tensors
-        inputs = torch.randn(*dims, device="cuda", dtype=data_type, requires_grad=(not args.inference))
-        grads = None
-        if not args.inference :
-            grads = torch.randn(*dims, device="cuda", dtype=data_type, requires_grad=False)
-
-        # Loop over model implemenatations
-        for impl in op_impls :
-            if impl[0] == 'NVFuser' :
-                model = torch.jit.script(impl[1](dims[-1]))
-            else :
-                model = impl[1](dims[-1])
-
-            if args.fp16 :
-                model.half()
-            model.cuda()
-
-            elapsed_time_fwd = 0.0
-            elapsed_time_bwd = 0.0
-            for cnt in range(0, args.trials + args.warmup_trials) :
-                # Setup Step
-                if not args.inference :
-                    inputs.grad = None
-                    model.zero_grad(set_to_none=True)
-                clear_l2_cache()
-
-                # Time forward
-                start_evt_fwd.record()
-                out = model(inputs)
-                stop_evt_fwd.record()
-
-                # Time backward (if enabled)
-                if not args.inference :
-                    start_evt_bwd.record()
-                    out.backward(grads)
-                    stop_evt_bwd.record()
-
-                # Collect timing results
-                if cnt >= args.warmup_trials :
-                    torch.cuda.synchronize()
-                    elapsed_time_fwd += start_evt_fwd.elapsed_time(stop_evt_fwd)
-                    if not args.inference :
-                        elapsed_time_bwd += start_evt_bwd.elapsed_time(stop_evt_bwd)
-        
-            fwd_time = elapsed_time_fwd / args.trials
-            result += ';' + impl[0] + ';' + str(fwd_time)
-
+def runner(args, op_modules, tests) :
+    # Keep runs consistent
+    torch.cuda.manual_seed(111)
+    data_type = torch.float16 if args.fp16 else torch.float32
+   
+    op_impls = []
+    for mod in op_modules :
+        if mod.__name__ == 'Fusion' :
+            op_impls.append(('Eager', mod))
+            op_impls.append(('NVFuser', mod))
+        else :
+            op_impls.append((mod.__name__, mod))
+     
+    # Create Cuda Timing Events
+    start_evt_fwd = torch.cuda.Event(enable_timing=True)
+    stop_evt_fwd = torch.cuda.Event(enable_timing=True)
+    start_evt_bwd = None
+    stop_evt_bwd = None
+    if not args.inference :
+        start_evt_bwd = torch.cuda.Event(enable_timing=True)
+        stop_evt_bwd = torch.cuda.Event(enable_timing=True)
+   
+    for test in tests :
+        experiments = [(td, reduce(operator.mul, td)) for td in gen_tensor_dims(test)]
+        experiments = sorted(experiments, key=itemgetter(1))
+        for dims,elems in experiments :
+            result = "infer;" if args.inference else "train;"
+            result += str(data_type) + ';'
+            result += str(dims) + ';' + str(elems)
+ 
+            # Setup Data Tensors
+            inputs = torch.randn(*dims, device="cuda", dtype=data_type, requires_grad=(not args.inference))
+            grads = None
             if not args.inference :
-                bwd_time = elapsed_time_bwd / args.trials
-                result += ';' + str(bwd_time)
-
-        print(result)
+                grads = torch.randn(*dims, device="cuda", dtype=data_type, requires_grad=False)
+ 
+            # Loop over model implemenatations
+            for impl in op_impls :
+                if impl[0] == 'NVFuser' :
+                    model = torch.jit.script(impl[1](dims[-1]))
+                else :
+                    model = impl[1](dims[-1])
+ 
+                if args.fp16 :
+                    model.half()
+                model.cuda()
+ 
+                elapsed_time_fwd = 0.0
+                elapsed_time_bwd = 0.0
+                for cnt in range(0, args.trials + args.warmup_trials) :
+                    # Setup Step
+                    if not args.inference :
+                        inputs.grad = None
+                        model.zero_grad(set_to_none=True)
+                    clear_l2_cache()
+ 
+                    # Time forward
+                    start_evt_fwd.record()
+                    out = model(inputs)
+                    stop_evt_fwd.record()
+ 
+                    # Time backward (if enabled)
+                    if not args.inference :
+                        start_evt_bwd.record()
+                        out.backward(grads)
+                        stop_evt_bwd.record()
+ 
+                    # Collect timing results
+                    if cnt >= args.warmup_trials :
+                        torch.cuda.synchronize()
+                        elapsed_time_fwd += start_evt_fwd.elapsed_time(stop_evt_fwd)
+                        if not args.inference :
+                            elapsed_time_bwd += start_evt_bwd.elapsed_time(stop_evt_bwd)
+            
+                fwd_time = elapsed_time_fwd / args.trials
+                result += ';' + impl[0] + ';' + str(fwd_time)
+ 
+                if not args.inference :
+                    bwd_time = elapsed_time_bwd / args.trials
+                    result += ';' + str(bwd_time)
+ 
+            print(result)
