@@ -19,4 +19,4 @@ if __name__ == "__main__" :
             ]
     op_modules = [Fusion]
 
-    runner.runner(runner.args, op_modules, tests)
+    runner.runner(runner.args, op_modules, tests, 1)

@@ -53,7 +53,7 @@ def gen_tensor_dims(recipe) :
                 queue.append((idx+1, result.copy()))
             result.pop()
 
-def runner(args, op_modules, tests) :
+def runner(args, op_modules, tests, num_inputs) :
     # Keep runs consistent
     torch.cuda.manual_seed(111)
     data_type = torch.float16 if args.fp16 else torch.float32
@@ -101,7 +101,7 @@ def runner(args, op_modules, tests) :
                 model.to(device=device)
             
                 # Setup Data Tensors
-                inputs = torch.randn(*dims, device=device, dtype=data_type, requires_grad=(not args.inference))
+                inputs = [torch.randn(*dims, device=device, dtype=data_type, requires_grad=(not args.inference)) for _ in range(num_inputs)]
                 grads = None
                 if not args.inference :
                     grads = torch.randn(*dims, device=device, dtype=data_type, requires_grad=False)
@@ -111,13 +111,14 @@ def runner(args, op_modules, tests) :
                 for cnt in range(0, args.trials + args.warmup_trials) :
                     # Setup Step
                     if not args.inference :
-                        inputs.grad = None
+                        for input in inputs :
+                            input.grad = None
                         model.zero_grad(set_to_none=True)
                     clear_l2_cache()
  
                     # Time forward
                     start_evt_fwd.record()
-                    out = model(inputs)
+                    out = model(*inputs)
                     stop_evt_fwd.record()
                     
                     if device == 'lazy' :
