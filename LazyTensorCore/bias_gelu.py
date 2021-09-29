@@ -7,7 +7,7 @@ import runner
 class Fusion(Module):
     def __init__(self, dims):
         super(Fusion, self).__init__()
-        self.bias = torch.nn.Parameter(torch.zeros(dims[-1]))
+        self.bias = torch.nn.Parameter(torch.zeros(1, 1, dims[-1]))
 
     def forward(self, inputs):
         out1 = inputs + self.bias

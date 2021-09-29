@@ -115,12 +115,17 @@ def runner(args, op_modules, tests) :
                     start_evt_fwd.record()
                     out = model(inputs)
                     stop_evt_fwd.record()
+                    
+                    if device == 'lazy' :
+                        ltm.mark_step()
  
                     # Time backward (if enabled)
                     if not args.inference :
                         start_evt_bwd.record()
                         out.backward(grads)
                         stop_evt_bwd.record()
+                        if device == 'lazy' :
+                            ltm.mark_step()
  
                     # Collect timing results
                     if cnt >= args.warmup_trials :
@@ -129,9 +134,6 @@ def runner(args, op_modules, tests) :
                         if not args.inference :
                             elapsed_time_bwd += start_evt_bwd.elapsed_time(stop_evt_bwd)
 
-                    if device == 'lazy' :
-                        ltm.mark_step()
-                    
                 fwd_time = elapsed_time_fwd / args.trials
                 result += ';' + impl[0] + ';' + str(fwd_time)
  
