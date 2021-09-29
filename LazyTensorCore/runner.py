@@ -62,7 +62,8 @@ def runner(args, op_modules, tests) :
     for mod in op_modules :
         if mod.__name__ == 'Fusion' :
             op_impls.append(('Eager', mod))
-            op_impls.append(('NVFuser', mod))
+            op_impls.append(('TS_NVFuser', mod))
+            op_impls.append(('LTC_NVFuser', mod))
         else :
             op_impls.append((mod.__name__, mod))
      
@@ -85,13 +86,16 @@ def runner(args, op_modules, tests) :
  
             # Loop over model implemenatations
             for impl in op_impls :
-                if impl[0] == 'NVFuser' :
+                if impl[0] == 'LTC_NVFuser' :
                     device = 'lazy'
+                    model = impl[1](dims)
+                elif impl[0] == 'TS_NVFuser' :
+                    device = 'cuda'
+                    model = torch.jit.script(impl[1](dims))
                 else :
                     device = 'cuda'
+                    model = impl[1](dims)
 
-                model = impl[1](dims)
- 
                 if args.fp16 :
                     model.half()
                 model.to(device=device)
