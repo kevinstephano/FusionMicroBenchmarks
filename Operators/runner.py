@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 # Enable JIT Autocast
 torch._C._jit_set_autocast_mode(True)
+torch._C._jit_set_nvfuser_single_node_mode(True)
 
 parser = argparse.ArgumentParser(description='Fusion Benchmark Runner')
 parser.add_argument('--warmup-trials', default=5, type=int, help='Number of trials to not measure.')
