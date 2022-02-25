@@ -13,12 +13,14 @@ torch._C._jit_set_profiling_executor(True)
 torch._C._jit_set_profiling_mode(True)
 torch._C._jit_override_can_fuse_on_cpu(False)
 torch._C._jit_override_can_fuse_on_gpu(False)
+torch._C._jit_set_autocast_mode(True)
 torch._C._jit_set_bailout_depth(20)
 
 parser = argparse.ArgumentParser(description='Fusion Benchmark Runner')
 parser.add_argument('--warmup-trials', default=5, type=int, help='Number of trials to not measure.')
 parser.add_argument('--trials', default=100, type=int, help='Number of trials to average execution time over.')
 parser.add_argument('--fp16', default=False, action='store_true', help='FP16 Precision.')
+parser.add_argument('--nhwc', default=False, action='store_true', help='Use NHWC memory format.')
 parser.add_argument('--inference', default=False, action='store_true', help='Measure inference.')
 
 args = parser.parse_args()
@@ -49,7 +51,7 @@ def gen_tensor_dims(recipe) :
                 queue.append((idx+1, result.copy()))
             result.pop()
 
-def runner(args, op_modules, tests) :
+def runner(args, op_modules, tests, reduction_dim-1) :
     # Keep runs consistent
     torch.cuda.manual_seed(111)
     data_type = torch.float16 if args.fp16 else torch.float32
@@ -88,9 +90,9 @@ def runner(args, op_modules, tests) :
             # Loop over model implemenatations
             for impl in op_impls :
                 if impl[0] == 'NVFuser' :
-                    model = torch.jit.script(impl[1](dims[-1]))
+                    model = torch.jit.script(impl[1](dims[reduction_dim]))
                 else :
-                    model = impl[1](dims[-1])
+                    model = impl[1](dims[reduction_dim])
  
                 if args.fp16 :
                     model.half()
