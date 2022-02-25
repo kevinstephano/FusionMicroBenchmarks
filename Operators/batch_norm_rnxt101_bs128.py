@@ -12,8 +12,7 @@ class Fusion(Module):
 
     def forward(self, inputs):
         out1 = self.bn(inputs)
-        out2 = torch.relu(out1)
-        return out2
+        return out1
 
 
 if __name__ == "__main__" :
