@@ -14,7 +14,7 @@ torch._C._jit_set_profiling_mode(True)
 torch._C._jit_override_can_fuse_on_cpu(False)
 torch._C._jit_override_can_fuse_on_gpu(False)
 torch._C._jit_set_autocast_mode(True)
-torch._C._jit_set_bailout_depth(20)
+#torch._C._jit_set_bailout_depth(20)
 
 parser = argparse.ArgumentParser(description='Fusion Benchmark Runner')
 parser.add_argument('--warmup-trials', default=5, type=int, help='Number of trials to not measure.')
@@ -51,7 +51,7 @@ def gen_tensor_dims(recipe) :
                 queue.append((idx+1, result.copy()))
             result.pop()
 
-def runner(args, op_modules, tests, reduction_dim-1) :
+def runner(args, op_modules, tests, reduction_dim=-1) :
     # Keep runs consistent
     torch.cuda.manual_seed(111)
     data_type = torch.float16 if args.fp16 else torch.float32
@@ -83,9 +83,13 @@ def runner(args, op_modules, tests, reduction_dim-1) :
  
             # Setup Data Tensors
             inputs = torch.randn(*dims, device="cuda", dtype=data_type, requires_grad=(not args.inference))
+            if args.nhwc :
+                inputs = inputs.to(memory_format=torch.channels_last)
             grads = None
             if not args.inference :
                 grads = torch.randn(*dims, device="cuda", dtype=data_type, requires_grad=False)
+                if args.nhwc :
+                    grads = grads.to(memory_format=torch.channels_last)
  
             # Loop over model implemenatations
             for impl in op_impls :
@@ -93,7 +97,10 @@ def runner(args, op_modules, tests, reduction_dim-1) :
                     model = torch.jit.script(impl[1](dims[reduction_dim]))
                 else :
                     model = impl[1](dims[reduction_dim])
- 
+               
+                if args.nhwc :
+                    model = model.to(memory_format=torch.channels_last)
+
                 if args.fp16 :
                     model.half()
                 model.cuda()
