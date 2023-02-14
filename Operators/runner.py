@@ -4,6 +4,7 @@ import operator
 from operator import itemgetter
 
 import torch
+import torch._dynamo
 import torch.nn.functional as F
 
 # Enable JIT Autocast
@@ -56,7 +57,8 @@ def runner(args, op_modules, tests, reduction_dim=-1) :
     for mod in op_modules :
         if mod.__name__ == 'Fusion' :
             op_impls.append(('Eager', mod))
-            op_impls.append(('NVFuser', mod))
+            op_impls.append(('Inductor', mod))
+            op_impls.append(('nvFuser-Jit', mod))
         else :
             op_impls.append((mod.__name__, mod))
      
@@ -90,8 +92,14 @@ def runner(args, op_modules, tests, reduction_dim=-1) :
             # Loop over model implemenatations
             with torch.jit.fuser('fuser2') :
                 for impl in op_impls :
-                    if impl[0] == 'NVFuser' :
+                    if impl[0] == 'nvFuser-Jit' :
                         model = torch.jit.script(impl[1](dims[reduction_dim]))
+                    elif impl[0] == 'nvFuser-Prims' :
+                        torch._dynamo.reset()
+                        model = torch.compile(impl[1](dims[reduction_dim]), backend='nvprims_nvfuser')
+                    elif impl[0] == 'Inductor' :
+                        torch._dynamo.reset()
+                        model = torch.compile(impl[1](dims[reduction_dim]))
                     else :
                         model = impl[1](dims[reduction_dim])
                    
